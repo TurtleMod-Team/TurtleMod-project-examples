@@ -1,559 +1,272 @@
-// scripts/turtlemod-script.ts
-// Core TurtleMod engine + blocks + base sprite class (TypeScript)
+// TurtleMod Functional Engine — NO CLASSES, ONLY FUNCTIONS + PLAIN OBJECTS
 
 //
-// Utility: simple event emitter
+// Types
 //
-class TM_EventBus {
-  private listeners: Record<string, Array<(...args: any[]) => void>> = {};
-
-  on(event: string, handler: (...args: any[]) => void): void {
-    if (!this.listeners[event]) this.listeners[event] = [];
-    this.listeners[event].push(handler);
-  }
-
-  emit(event: string, ...args: any[]): void {
-    const list = this.listeners[event];
-    if (!list) return;
-    for (const handler of list) {
-      try {
-        handler(...args);
-      } catch (e) {
-        console.error("[TurtleMod] Event handler error:", e);
-      }
-    }
-  }
-}
-
-//
-// Types for config and project
-//
-export interface TMEngineConfig {
-  logLevel?: "debug" | "info" | "warn" | "error";
-  enableWarnings?: boolean;
-  enableDebugTools?: boolean;
-}
-
-export interface TMRuntimeConfig {
-  frameRate?: number;
-  maxSprites?: number;
-  safeMode?: boolean;
-}
-
-export interface TMTMConfig {
-  strictMode?: boolean;
-  allowDynamicSprites?: boolean;
-  defaultSpriteSettings?: {
-    rotationStyle?: "all-around" | "left-right" | "don’t-rotate";
-    visible?: boolean;
-    draggable?: boolean;
-  };
-  engine?: TMEngineConfig;
-  runtime?: TMRuntimeConfig;
-  otherstuff?: {
-    entryjsonfile?: string;
-    project?: string;
-    include?: string[];
-    exclude?: string[];
-  };
-}
+export type StopType = "all" | "this" | "others";
 
 export interface TMProjectData {
-  tmconfig?: TMTMConfig;
+  tmconfig?: any;
   [key: string]: any;
 }
 
-export interface TMCostume {
-  name: string;
-  svgPath: string;
+export interface TMSprite {
+  x: number;
+  y: number;
+  direction: number;
+  visible: boolean;
+  size: number;
+  sayBubble: string | null;
+  thinkBubble: string | null;
+  costumes: { name: string; svgPath: string }[];
+  currentCostumeIndex: number;
+  draggable: boolean;
+  __runtime: TMRuntime | null;
+  __stopped: boolean;
+}
+
+export interface TMRuntime {
+  config: any;
+  sprites: TMSprite[];
+  stage: { width: number; height: number; background: string | null };
+  eventBus: Record<string, ((...args: any[]) => void)[]>;
+  variables: Record<string, any>;
+  lists: Record<string, any[]>;
+  running: boolean;
 }
 
 //
-// Global runtime state (per engine instance)
+// GLOBAL STATE
 //
-class TM_Runtime {
-  public config: TMTMConfig;
-  public sprites: TM_Sprite[] = [];
-  public stage: {
-    width: number;
-    height: number;
-    background: string | null;
+let __runtime: TMRuntime | null = null;
+let __currentSprite: TMSprite | null = null;
+
+//
+// Event Bus (functional)
+//
+function createEventBus() {
+  return {};
+}
+
+function onEvent(bus: any, event: string, handler: (...args: any[]) => void) {
+  if (!bus[event]) bus[event] = [];
+  bus[event].push(handler);
+}
+
+function emitEvent(bus: any, event: string, ...args: any[]) {
+  const list = bus[event];
+  if (!list) return;
+  for (const fn of list) fn(...args);
+}
+
+//
+// Sprite Factory (plain object)
+//
+function createSprite(): TMSprite {
+  return {
+    x: 0,
+    y: 0,
+    direction: 90,
+    visible: true,
+    size: 100,
+    sayBubble: null,
+    thinkBubble: null,
+    costumes: [],
+    currentCostumeIndex: 0,
+    draggable: false,
+    __runtime: null,
+    __stopped: false
   };
-  public eventBus: TM_EventBus;
-  public variables: Record<string, any> = {};
-  public lists: Record<string, any[]> = {};
-  public running: boolean = false;
-
-  constructor(config?: TMTMConfig) {
-    this.config = config || {};
-    this.stage = {
-      width: 480,
-      height: 360,
-      background: null
-    };
-    this.eventBus = new TM_EventBus();
-  }
-
-  addSprite(sprite: TM_Sprite): void {
-    this.sprites.push(sprite);
-    sprite.__runtime = this;
-  }
-
-  broadcast(message: string): void {
-    this.eventBus.emit("broadcast:" + message);
-  }
-
-  whenBroadcast(message: string, handler: () => void): void {
-    this.eventBus.on("broadcast:" + message, handler);
-  }
-
-  whenFlagClicked(handler: () => void): void {
-    this.eventBus.on("flagClicked", handler);
-  }
-
-  triggerFlagClicked(): void {
-    this.eventBus.emit("flagClicked");
-  }
-
-  setVariable(name: string, value: any): void {
-    this.variables[name] = value;
-  }
-
-  getVariable(name: string): any {
-    return this.variables[name];
-  }
-
-  ensureList(name: string): any[] {
-    if (!this.lists[name]) this.lists[name] = [];
-    return this.lists[name];
-  }
-
-  log(level: "debug" | "info" | "warn" | "error", ...msg: any[]): void {
-    const allowed: Array<"debug" | "info" | "warn" | "error"> = [
-      "debug",
-      "info",
-      "warn",
-      "error"
-    ];
-    if (!allowed.includes(level)) level = "info";
-
-    const engineLevel =
-      this.config.engine?.logLevel ||
-      (this.config.engine as any)?.loglevel ||
-      "warn";
-    const engineIndex = allowed.indexOf(engineLevel);
-    const msgIndex = allowed.indexOf(level);
-
-    if (msgIndex >= engineIndex) {
-      console[level]("[TurtleMod]", ...msg);
-    }
-  }
 }
 
 //
-// Base Sprite class: ALL blocks live here
+// Runtime Factory (plain object)
 //
-export class TM_Sprite {
-  // Core state
-  public x: number = 0;
-  public y: number = 0;
-  public direction: number = 90; // Scratch-style: 90 = right
-  public visible: boolean = true;
-  public size: number = 100;
-  public costumes: TMCostume[] = [];
-  public currentCostumeIndex: number = 0;
-  public sayBubble: string | null = null;
-  public thinkBubble: string | null = null;
-  public draggable: boolean = false;
+function createRuntime(config: any): TMRuntime {
+  return {
+    config,
+    sprites: [],
+    stage: { width: 480, height: 360, background: null },
+    eventBus: createEventBus(),
+    variables: {},
+    lists: {},
+    running: false
+  };
+}
 
-  // Internal
-  public __runtime: TM_Runtime | null = null;
-  protected __eventsRegistered: boolean = false;
+//
+// ENGINE FUNCTIONS
+//
 
-  constructor() {}
+export function loadProject(projectData: TMProjectData) {
+  __runtime = createRuntime(projectData.tmconfig || {});
+  __runtime.running = true;
 
-  //
-  // --- Motion blocks ---
-  //
+  // Start update loop
+  const fps = projectData.tmconfig?.runtime?.frameRate ?? 60;
+  const interval = 1000 / fps;
 
-  move(steps: number): void {
-    const radians = (this.direction - 90) * (Math.PI / 180);
-    this.x += Math.cos(radians) * steps;
-    this.y += Math.sin(radians) * steps;
-  }
-
-  turnRight(deg: number): void {
-    this.direction = (this.direction + deg) % 360;
-  }
-
-  turnLeft(deg: number): void {
-    this.direction = (this.direction - deg) % 360;
-  }
-
-  goTo(x: number, y: number): void {
-    this.x = x;
-    this.y = y;
-  }
-
-  goToSprite(otherSprite: TM_Sprite | null): void {
-    if (!otherSprite) return;
-    this.x = otherSprite.x;
-    this.y = otherSprite.y;
-  }
-
-  glide(seconds: number, x: number, y: number): void {
-    const startX = this.x;
-    const startY = this.y;
-    const dx = x - startX;
-    const dy = y - startY;
-    const startTime = performance.now();
-    const duration = seconds * 1000;
-
-    const step = () => {
-      const now = performance.now();
-      const t = Math.min(1, (now - startTime) / duration);
-      this.x = startX + dx * t;
-      this.y = startY + dy * t;
-      if (t < 1) {
-        requestAnimationFrame(step);
+  setInterval(() => {
+    if (!__runtime || !__runtime.running) return;
+    for (const sprite of __runtime.sprites) {
+      if (!sprite.__stopped) {
+        // No update() function anymore — functional engine
       }
-    };
-
-    requestAnimationFrame(step);
-  }
-
-  pointInDirection(deg: number): void {
-    this.direction = deg % 360;
-  }
-
-  pointTowards(x: number, y: number): void {
-    const dx = x - this.x;
-    const dy = y - this.y;
-    const angle = Math.atan2(dy, dx) * (180 / Math.PI) + 90;
-    this.direction = angle;
-  }
-
-  //
-  // --- Looks blocks ---
-  //
-
-  say(message: any, duration: number | null = null): void {
-    this.sayBubble = String(message);
-    if (duration !== null) {
-      setTimeout(() => {
-        this.sayBubble = null;
-      }, duration * 1000);
     }
+  }, interval);
+
+  // Trigger green flag
+  emitEvent(__runtime.eventBus, "flagClicked");
+}
+
+//
+// Sprite Registration
+//
+export function registerSprite(script: () => void): TMSprite {
+  if (!__runtime) throw new Error("Engine not loaded");
+
+  const sprite = createSprite();
+  sprite.__runtime = __runtime;
+
+  __runtime.sprites.push(sprite);
+
+  // Run script with this sprite as current
+  const prev = __currentSprite;
+  __currentSprite = sprite;
+  script();
+  __currentSprite = prev;
+
+  return sprite;
+}
+
+//
+// EVENT API
+//
+export function whenFlagClicked(handler: () => void) {
+  if (!__runtime || !__currentSprite) return;
+  onEvent(__runtime.eventBus, "flagClicked", () => {
+    const prev = __currentSprite;
+    __currentSprite = __currentSprite;
+    handler();
+    __currentSprite = prev;
+  });
+}
+
+export function whenBroadcastReceived(message: string, handler: () => void) {
+  if (!__runtime || !__currentSprite) return;
+  onEvent(__runtime.eventBus, "broadcast:" + message, () => {
+    const prev = __currentSprite;
+    __currentSprite = __currentSprite;
+    handler();
+    __currentSprite = prev;
+  });
+}
+
+export function broadcast(message: string) {
+  if (!__runtime) return;
+  emitEvent(__runtime.eventBus, "broadcast:" + message);
+}
+
+//
+// BLOCK FUNCTIONS (functional Scratch-like API)
+//
+
+function ensureSprite() {
+  if (!__currentSprite) throw new Error("No active sprite");
+  return __currentSprite;
+}
+
+export function say(msg: any, duration?: number) {
+  const s = ensureSprite();
+  s.sayBubble = String(msg);
+  if (duration) setTimeout(() => (s.sayBubble = null), duration * 1000);
+}
+
+export function think(msg: any, duration?: number) {
+  const s = ensureSprite();
+  s.thinkBubble = String(msg);
+  if (duration) setTimeout(() => (s.thinkBubble = null), duration * 1000);
+}
+
+export function move(steps: number) {
+  const s = ensureSprite();
+  const rad = (s.direction - 90) * (Math.PI / 180);
+  s.x += Math.cos(rad) * steps;
+  s.y += Math.sin(rad) * steps;
+}
+
+export function turnRight(deg: number) {
+  const s = ensureSprite();
+  s.direction = (s.direction + deg) % 360;
+}
+
+export function turnLeft(deg: number) {
+  const s = ensureSprite();
+  s.direction = (s.direction - deg) % 360;
+}
+
+export function goTo(x: number, y: number) {
+  const s = ensureSprite();
+  s.x = x;
+  s.y = y;
+}
+
+export function show() {
+  ensureSprite().visible = true;
+}
+
+export function hide() {
+  ensureSprite().visible = false;
+}
+
+//
+// STOP FUNCTION
+//
+export function stop(type: StopType) {
+  if (!__runtime) return;
+
+  if (type === "all") {
+    __runtime.running = false;
+    return;
   }
 
-  think(message: any, duration: number | null = null): void {
-    this.thinkBubble = String(message);
-    if (duration !== null) {
-      setTimeout(() => {
-        this.thinkBubble = null;
-      }, duration * 1000);
+  const s = ensureSprite();
+
+  if (type === "this") {
+    s.__stopped = true;
+    return;
+  }
+
+  if (type === "others") {
+    for (const sp of __runtime.sprites) {
+      if (sp !== s) sp.__stopped = true;
     }
-  }
-
-  show(): void {
-    this.visible = true;
-  }
-
-  hide(): void {
-    this.visible = false;
-  }
-
-  changeSizeBy(amount: number): void {
-    this.size += amount;
-  }
-
-  setSizeTo(percent: number): void {
-    this.size = percent;
-  }
-
-  addCostume(name: string, svgPath: string): void {
-    this.costumes.push({ name, svgPath });
-  }
-
-  switchCostume(nameOrIndex: string | number): void {
-    if (typeof nameOrIndex === "number") {
-      if (this.costumes[nameOrIndex]) {
-        this.currentCostumeIndex = nameOrIndex;
-      }
-      return;
-    }
-    const index = this.costumes.findIndex(c => c.name === nameOrIndex);
-    if (index !== -1) {
-      this.currentCostumeIndex = index;
-    }
-  }
-
-  nextCostume(): void {
-    if (this.costumes.length === 0) return;
-    this.currentCostumeIndex =
-      (this.currentCostumeIndex + 1) % this.costumes.length;
-  }
-
-  //
-  // --- Control blocks ---
-  //
-
-  wait(seconds: number): Promise<void> {
-    return new Promise(resolve => {
-      setTimeout(resolve, seconds * 1000);
-    });
-  }
-
-  async repeat(times: number, fn: () => Promise<void> | void): Promise<void> {
-    for (let i = 0; i < times; i++) {
-      await fn();
-    }
-  }
-
-  async forever(fn: () => Promise<void> | void): Promise<void> {
-    // Cooperative loop; user code must yield via await
-    while (true) {
-      await fn();
-    }
-  }
-
-  //
-  // --- Events (per-sprite) ---
-  //
-
-  whenFlagClicked(handler: () => void): void {
-    if (!this.__runtime) return;
-    this.__runtime.whenFlagClicked(() => handler.call(this));
-  }
-
-  whenBroadcastReceived(message: string, handler: () => void): void {
-    if (!this.__runtime) return;
-    this.__runtime.whenBroadcast(message, () => handler.call(this));
-  }
-
-  broadcast(message: string): void {
-    if (!this.__runtime) return;
-    this.__runtime.broadcast(message);
-  }
-
-  //
-  // --- Sensing blocks ---
-  //
-
-  touchingSprite(otherSprite: TM_Sprite | null): boolean {
-    if (!otherSprite) return false;
-    const dx = this.x - otherSprite.x;
-    const dy = this.y - otherSprite.y;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-    return dist < 10; // simple radius
-  }
-
-  distanceToSprite(otherSprite: TM_Sprite | null): number {
-    if (!otherSprite) return Infinity;
-    const dx = this.x - otherSprite.x;
-    const dy = this.y - otherSprite.y;
-    return Math.sqrt(dx * dx + dy * dy);
-  }
-
-  //
-  // --- Operators (helpers) ---
-  //
-
-  opRandom(min: number, max: number): number {
-    return Math.random() * (max - min) + min;
-  }
-
-  opJoin(a: any, b: any): string {
-    return String(a) + String(b);
-  }
-
-  opLetterOf(n: number, text: any): string {
-    const s = String(text);
-    const i = n - 1;
-    if (i < 0 || i >= s.length) return "";
-    return s[i];
-  }
-
-  opLengthOf(text: any): number {
-    return String(text).length;
-  }
-
-  opContains(text: any, sub: any): boolean {
-    return String(text).includes(String(sub));
-  }
-
-  //
-  // --- Variables & Lists (via runtime) ---
-  //
-
-  setVariable(name: string, value: any): void {
-    if (!this.__runtime) return;
-    this.__runtime.setVariable(name, value);
-  }
-
-  changeVariableBy(name: string, amount: number): void {
-    if (!this.__runtime) return;
-    const current = Number(this.__runtime.getVariable(name) ?? 0);
-    this.__runtime.setVariable(name, current + amount);
-  }
-
-  getVariable(name: string): any {
-    if (!this.__runtime) return undefined;
-    return this.__runtime.getVariable(name);
-  }
-
-  getList(name: string): any[] {
-    if (!this.__runtime) return [];
-    return this.__runtime.ensureList(name);
-  }
-
-  listAdd(name: string, value: any): void {
-    const list = this.getList(name);
-    list.push(value);
-  }
-
-  listDelete(name: string, index: number | "all"): void {
-    const list = this.getList(name);
-    if (index === "all") {
-      list.length = 0;
-      return;
-    }
-    const i = index - 1;
-    if (i >= 0 && i < list.length) {
-      list.splice(i, 1);
-    }
-  }
-
-  listInsertAt(name: string, index: number, value: any): void {
-    const list = this.getList(name);
-    const i = index - 1;
-    if (i < 0 || i > list.length) return;
-    list.splice(i, 0, value);
-  }
-
-  listReplaceItem(name: string, index: number, value: any): void {
-    const list = this.getList(name);
-    const i = index - 1;
-    if (i < 0 || i >= list.length) return;
-    list[i] = value;
-  }
-
-  listItem(name: string, index: number): any {
-    const list = this.getList(name);
-    const i = index - 1;
-    if (i < 0 || i >= list.length) return "";
-    return list[i];
-  }
-
-  listLength(name: string): number {
-    const list = this.getList(name);
-    return list.length;
-  }
-
-  listContains(name: string, value: any): boolean {
-    const list = this.getList(name);
-    return list.includes(value);
-  }
-
-  //
-  // --- Lifecycle ---
-  //
-
-  // User overrides this in sprite classes
-  update(): void {
-    // Called every frame by the engine
   }
 }
 
 //
-// TurtleMod engine core
+// VARIABLES
 //
-export class TurtleMod {
-  public project: TMProjectData;
-  public tmconfig: TMTMConfig;
-  public runtime: TM_Runtime;
-  private started: boolean = false;
+export function setVariable(name: string, value: any) {
+  if (!__runtime) return;
+  __runtime.variables[name] = value;
+}
 
-  constructor(projectData: TMProjectData) {
-    this.project = projectData || {};
-    this.tmconfig = projectData.tmconfig || {};
-    this.runtime = new TM_Runtime(this.tmconfig);
-  }
-
-  registerSprite(name: string, SpriteClass: new () => TM_Sprite): TM_Sprite {
-    const sprite = new SpriteClass();
-    sprite.__runtime = this.runtime;
-    this.runtime.addSprite(sprite);
-    this.runtime.log("debug", `Sprite registered: ${name}`);
-    return sprite;
-  }
-
-  start(): void {
-    if (this.started) return;
-    this.started = true;
-
-    this.runtime.log("info", "TurtleMod engine started");
-
-    // Trigger green flag events
-    this.runtime.triggerFlagClicked();
-
-    const fps = this.tmconfig.runtime?.frameRate ?? 60;
-    const interval = 1000 / fps;
-
-    this.runtime.running = true;
-
-    setInterval(() => {
-      if (!this.runtime.running) return;
-      for (const sprite of this.runtime.sprites) {
-        try {
-          sprite.update();
-        } catch (e) {
-          this.runtime.log("error", "Sprite update error:", e);
-        }
-      }
-    }, interval);
-  }
-
-  stop(): void {
-    this.runtime.running = false;
-    this.runtime.log("info", "TurtleMod engine stopped");
-  }
+export function getVariable(name: string) {
+  if (!__runtime) return undefined;
+  return __runtime.variables[name];
 }
 
 //
-// Global loader used by index.ts or the project system
+// LISTS
 //
-export function loadProject(projectData: TMProjectData): TurtleMod {
-  const engine = new TurtleMod(projectData);
-  return engine;
+export function listAdd(name: string, value: any) {
+  if (!__runtime) return;
+  if (!__runtime.lists[name]) __runtime.lists[name] = [];
+  __runtime.lists[name].push(value);
 }
 
-//
-// Convenience exports for user code
-//
-export function whenFlagClicked(sprite: TM_Sprite, handler: () => void): void {
-  if (!sprite.__runtime) return;
-  sprite.__runtime.whenFlagClicked(() => handler.call(sprite));
-}
-
-export function whenBroadcastReceived(
-  sprite: TM_Sprite,
-  message: string,
-  handler: () => void
-): void {
-  if (!sprite.__runtime) return;
-  sprite.__runtime.whenBroadcast(message, () => handler.call(sprite));
-}
-
-export function broadcast(
-  spriteOrRuntime: TM_Sprite | TM_Runtime | null,
-  message: string
-): void {
-  if (!spriteOrRuntime) return;
-  if (spriteOrRuntime instanceof TM_Sprite) {
-    if (!spriteOrRuntime.__runtime) return;
-    spriteOrRuntime.__runtime.broadcast(message);
-  } else {
-    spriteOrRuntime.broadcast(message);
-  }
+export function listLength(name: string) {
+  if (!__runtime) return 0;
+  return (__runtime.lists[name] || []).length;
 }
