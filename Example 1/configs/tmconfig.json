@@ -1,0 +1,25 @@
+{
+  "strictMode": true,
+  "allowDynamicSprites": false,
+  "defaultSpriteSettings": {
+    "rotationStyle": "all-around",
+    "visible": true,
+    "draggable": false
+  },
+  "engine": {
+    "logLevel": "warn",
+    "enableWarnings": true,
+    "enableDebugTools": false
+  },
+  "runtime": {
+    "frameRate": 60,
+    "maxSprites": 200,
+    "safeMode": true
+  },
+  "otherstuff": {
+    "entryjsonfile": "project.json",
+    "project": "./",
+    "include": ["project"],
+    "exclude": ["test stuffs"]
+  }
+}
