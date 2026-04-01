@@ -1,0 +1,39 @@
+{
+  "name": "Boo",
+  "entry": "index.ts",
+  "icons": [
+    {
+      "file": "watermelon.svg"
+    }
+  ],
+  "map": [
+    {
+      "name": "turtlemod",
+      "file": "https://raw.githubusercontent.com/TurtleMod-Team/TurtleMod-project-examples/main/scripts/turtlemod-script.ts"
+    }
+  ],
+  "sprites": [
+    {
+      "name": "Watermelon",
+      "entry": "watermelon.ts",
+      "image": "watermelon.svg",
+      "costumes": [
+        {
+          "name": "watermelon",
+          "file": "watermelon.svg"
+        }
+      ]
+    }
+  ],
+  "configs": [
+    {
+      "name": "Ts config",
+      "file": "tsconfig.json"
+    },
+    {
+      "name": "TurtleMod config",
+      "file": "tmconfig.json"
+    }
+  ],
+  "test stuffs": {}
+}
